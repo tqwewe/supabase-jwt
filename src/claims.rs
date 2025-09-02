@@ -9,7 +9,7 @@
 //! once they have been successfully validated.
 
 use crate::{error::AuthError, jwks::JwksCache, parser::JwtParser};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Represents the claims of a Supabase JWT.
 ///
@@ -37,7 +37,8 @@ pub struct Claims {
     /// User-specific metadata.
     pub user_metadata: Option<serde_json::Value>,
     /// (Audience) The recipient for which the JWT is intended.
-    pub aud: Option<String>,
+    #[serde(deserialize_with = "deserialize_audience")]
+    pub aud: Vec<String>,
     /// (Issuer) The principal that issued the JWT.
     pub iss: Option<String>,
     /// (Authentication Assurance Level) The level of assurance.
@@ -182,4 +183,42 @@ impl Claims {
             .and_then(|metadata| metadata.get(key))
             .and_then(|value| serde_json::from_value(value.clone()).ok())
     }
+}
+
+fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct AudienceVisitor;
+
+    impl<'de> Visitor<'de> for AudienceVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or array of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Vec<String>, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value.to_string()])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Vec<String>, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(value) = seq.next_element()? {
+                vec.push(value);
+            }
+            Ok(vec)
+        }
+    }
+
+    deserializer.deserialize_any(AudienceVisitor)
 }
